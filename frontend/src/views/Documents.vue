@@ -1,0 +1,441 @@
+<template>
+  <div class="docs-page">
+    <el-card>
+      <template #header>
+        <div class="head">
+          <span>文档库</span>
+          <div class="head-actions">
+            <el-input
+              v-model="keyword"
+              class="search-input"
+              placeholder="搜索标题 / 备注"
+              clearable
+              :prefix-icon="Search"
+              @keyup.enter="loadList(true)"
+              @clear="loadList(true)"
+            />
+            <el-button :icon="Download" :disabled="!list.length" @click="exportList">导出列表</el-button>
+            <el-upload
+              :show-file-list="false"
+              :auto-upload="false"
+              multiple
+              accept=".pdf,.txt,.md,.markdown,.pptx,.doc,.docx"
+              :on-change="onPick"
+              :disabled="uploading"
+            >
+              <el-button type="primary" :icon="Upload" :loading="uploading">上传文档</el-button>
+            </el-upload>
+          </div>
+        </div>
+      </template>
+
+      <!-- 空态：拖拽上传引导 -->
+      <div v-if="!loading && !list.length" class="docs-empty">
+        <el-upload
+          class="empty-upload"
+          drag
+          multiple
+          :show-file-list="false"
+          :auto-upload="false"
+          accept=".pdf,.txt,.md,.markdown,.pptx,.doc,.docx"
+          :on-change="onPick"
+          :disabled="uploading"
+        >
+          <el-icon :size="52" class="upload-big"><UploadFilled /></el-icon>
+          <div class="el-upload__text">拖拽文件到此处，或 <em>点击上传</em></div>
+          <div class="el-upload__tip">
+            支持 PDF / TXT / MD / PPTX / DOC / DOCX，可多选，将自动解析并构建知识库
+          </div>
+        </el-upload>
+      </div>
+
+      <!-- 列表 -->
+      <template v-else>
+        <el-radio-group v-model="category" style="margin-bottom: 12px">
+          <el-radio-button label="material">学习资料</el-radio-button>
+          <el-radio-button label="resume">简历</el-radio-button>
+          <el-radio-button label="interview">面试经验</el-radio-button>
+        </el-radio-group>
+
+        <div style="margin-bottom: 12px">
+          <el-button
+            size="small"
+            type="danger"
+            plain
+            :icon="Delete"
+            :disabled="!selection.length"
+            @click="removeMany"
+          >
+            批量删除{{ selection.length ? ` (${selection.length})` : '' }}
+          </el-button>
+        </div>
+
+        <el-table :data="list" border stripe v-loading="loading" @selection-change="selection = $event">
+          <el-table-column type="selection" width="48" />
+          <el-table-column label="标题" min-width="200">
+            <template #default="{ row }">
+              <el-link type="primary" :underline="false" @click="openPreview(row)">{{ row.title }}</el-link>
+            </template>
+          </el-table-column>
+          <el-table-column prop="file_type" label="类型" width="80" />
+          <el-table-column label="大小" width="100">
+            <template #default="{ row }">{{ formatSize(row.file_size) }}</template>
+          </el-table-column>
+          <el-table-column label="切片数" width="80">
+            <template #default="{ row }">{{ row.chunk_count || 0 }}</template>
+          </el-table-column>
+          <el-table-column prop="category" label="分类" width="90">
+            <template #default="{ row }">
+              <el-tag v-if="row.category === 'material'">资料</el-tag>
+              <el-tag v-else-if="row.category === 'resume'" type="success">简历</el-tag>
+              <el-tag v-else-if="row.category === 'interview'" type="warning">面试经验</el-tag>
+              <span v-else>{{ row.category }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="创建时间" width="160">
+            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="150" fixed="right">
+            <template #default="{ row }">
+              <el-button size="small" text type="primary" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+              <el-button size="small" text type="danger" :icon="Delete" :loading="row._deleting" @click="remove(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-if="hasMore" class="load-more">
+          <el-button :loading="loading" @click="loadList()">加载更多</el-button>
+        </div>
+      </template>
+    </el-card>
+
+    <!-- 预览弹窗 -->
+    <el-dialog v-model="previewVisible" :title="previewTitle" width="80%" top="5vh" destroy-on-close>
+      <div v-loading="previewLoading" class="preview-body">
+        <iframe v-if="!previewLoading && previewUrl" :src="previewUrl" class="preview-frame" />
+        <pre v-else-if="!previewLoading && previewText" class="preview-text">{{ previewText }}</pre>
+        <el-empty v-else-if="!previewLoading" description="暂不支持预览该类型" />
+      </div>
+    </el-dialog>
+
+    <!-- 编辑弹窗 -->
+    <el-dialog v-model="editVisible" title="编辑文档" width="480px">
+      <el-form label-width="60px">
+        <el-form-item label="标题">
+          <el-input v-model="editForm.title" maxlength="255" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="editForm.description" type="textarea" :rows="3" maxlength="5000" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingEdit" @click="saveEdit">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { Search, Edit, Upload, Delete, Download, UploadFilled } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import * as docApi from '@/api/document'
+
+const category = ref('material')
+const keyword = ref('')
+const list = ref([])
+const loading = ref(false)
+const uploading = ref(false)
+const total = ref(0)
+const page = ref(1)
+const pageSize = 20
+const hasMore = ref(false)
+const selection = ref([])
+const pendingQueue = ref([])
+
+// 预览
+const previewVisible = ref(false)
+const previewLoading = ref(false)
+const previewTitle = ref('')
+const previewUrl = ref('')
+const previewText = ref('')
+let currentObjectUrl = ''
+
+// 编辑
+const editVisible = ref(false)
+const savingEdit = ref(false)
+const editForm = ref({ id: null, title: '', description: '' })
+
+function formatSize(b) {
+  if (!b) return '0 B'
+  if (b < 1024) return b + ' B'
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB'
+  return (b / 1024 / 1024).toFixed(1) + ' MB'
+}
+
+function formatTime(t) {
+  if (!t) return ''
+  const d = new Date(t)
+  if (Number.isNaN(+d)) return t
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+async function loadList(reset = false) {
+  if (loading.value) return
+  loading.value = true
+  const targetPage = reset ? 1 : page.value
+  try {
+    const data = await docApi.listDocuments({
+      page: targetPage,
+      page_size: pageSize,
+      category: category.value,
+      keyword: keyword.value || undefined,
+    })
+    list.value = reset ? data.items : [...list.value, ...data.items]
+    total.value = data.total
+    page.value = targetPage + 1
+    hasMore.value = list.value.length < total.value
+  } catch (e) {
+    // request 拦截器已提示
+  } finally {
+    loading.value = false
+  }
+}
+
+async function uploadOne(raw) {
+  const res = await docApi.uploadDocument(raw, { category: category.value })
+  ElMessage.success(`已上传：${res.title}（${res.chunk_count} 个切片）`)
+  if (res.category === category.value) {
+    if (keyword.value) {
+      await loadList(true)
+    } else {
+      list.value.unshift({
+        id: res.id,
+        title: res.title,
+        file_type: raw.name.split('.').pop(),
+        file_size: raw.size,
+        category: res.category,
+        chunk_count: res.chunk_count,
+        created_at: new Date().toISOString(),
+      })
+      total.value += 1
+      hasMore.value = list.value.length < total.value
+    }
+  }
+}
+
+async function processQueue() {
+  if (uploading.value) return
+  uploading.value = true
+  try {
+    while (pendingQueue.value.length) {
+      const raw = pendingQueue.value.shift()
+      try {
+        await uploadOne(raw)
+      } catch (e) {
+        // request 拦截器已提示（含重复文件 400）
+      }
+    }
+  } finally {
+    uploading.value = false
+  }
+}
+
+function onPick(file) {
+  const raw = file.raw
+  if (!raw) return
+  pendingQueue.value.push(raw)
+  processQueue()
+}
+
+async function remove(row) {
+  await ElMessageBox.confirm('删除后向量库中对应的文档切片也会一并清除，确认继续？', '提示', {
+    type: 'warning',
+  })
+  row._deleting = true
+  try {
+    await docApi.deleteDocument(row.id)
+    list.value = list.value.filter((d) => d.id !== row.id)
+    ElMessage.success('已删除')
+  } finally {
+    row._deleting = false
+  }
+}
+
+async function removeMany() {
+  const ids = selection.value.map((r) => r.id)
+  if (!ids.length) return
+  await ElMessageBox.confirm(`确认删除选中的 ${ids.length} 个文档？向量库中对应的切片也会一并清除。`, '提示', {
+    type: 'warning',
+  })
+  try {
+    await Promise.all(ids.map((id) => docApi.deleteDocument(id)))
+  } catch (e) {
+    // request 拦截器已提示
+  }
+  selection.value = []
+  ElMessage.success('已删除')
+  await loadList(true)
+}
+
+// 导出当前筛选列表为 CSV
+function exportList() {
+  if (!list.value.length) {
+    ElMessage.warning('当前列表为空')
+    return
+  }
+  const head = ['ID', '标题', '类型', '大小(B)', '分类', '切片数', '创建时间']
+  const rows = list.value.map((d) => [
+    d.id,
+    d.title,
+    d.file_type,
+    d.file_size,
+    d.category,
+    d.chunk_count || 0,
+    formatTime(d.created_at),
+  ])
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const csv = '\uFEFF' + [head, ...rows].map((r) => r.map(esc).join(',')).join('\r\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `文档库_${category.value}_${Date.now()}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+  ElMessage.success('已导出 CSV')
+}
+
+async function openPreview(row) {
+  previewVisible.value = true
+  previewLoading.value = true
+  previewTitle.value = row.title
+  previewUrl.value = ''
+  previewText.value = ''
+  try {
+    const data = await docApi.previewDocument(row.id)
+    if (data.file_type === 'pdf' && data.preview_url) {
+      const blob = await docApi.getFileBlob(row.id)
+      if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl)
+      currentObjectUrl = URL.createObjectURL(blob)
+      previewUrl.value = currentObjectUrl
+    } else {
+      previewText.value = data.text || ''
+    }
+  } catch (e) {
+    // request 拦截器已提示
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function openEdit(row) {
+  editForm.value = { id: row.id, title: row.title, description: row.description || '' }
+  editVisible.value = true
+}
+
+async function saveEdit() {
+  if (!editForm.value.title.trim()) {
+    ElMessage.warning('标题不能为空')
+    return
+  }
+  savingEdit.value = true
+  try {
+    await docApi.updateDocument(editForm.value.id, {
+      title: editForm.value.title.trim(),
+      description: editForm.value.description,
+    })
+    ElMessage.success('已保存')
+    editVisible.value = false
+    const row = list.value.find((d) => d.id === editForm.value.id)
+    if (row) {
+      row.title = editForm.value.title.trim()
+      row.description = editForm.value.description
+    }
+  } catch (e) {
+    // request 拦截器已提示
+  } finally {
+    savingEdit.value = false
+  }
+}
+
+function onScroll() {
+  const el = document.documentElement
+  if (el.scrollTop + window.innerHeight >= el.scrollHeight - 120 && hasMore.value && !loading.value) {
+    loadList()
+  }
+}
+
+watch(category, () => loadList(true))
+
+onMounted(() => {
+  loadList(true)
+  window.addEventListener('scroll', onScroll, { passive: true })
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', onScroll)
+  if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl)
+})
+</script>
+
+<style scoped>
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.search-input {
+  width: 220px;
+}
+.load-more {
+  margin-top: 12px;
+  text-align: center;
+}
+.preview-body {
+  min-height: 200px;
+}
+.preview-frame {
+  width: 100%;
+  height: 65vh;
+  border: none;
+}
+.preview-text {
+  max-height: 65vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--el-fill-color-light);
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+/* 空态拖拽上传 */
+.docs-empty {
+  padding: 10px 0 6px;
+}
+.empty-upload :deep(.el-upload-dragger) {
+  border-radius: 16px;
+  border-style: dashed;
+  border-color: #a5b4fc;
+  background: rgba(238, 242, 255, 0.35);
+  padding: 48px 20px;
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+}
+.empty-upload :deep(.el-upload-dragger:hover) {
+  border-color: var(--brand-1);
+  background: rgba(238, 242, 255, 0.6);
+  transform: translateY(-2px);
+}
+.upload-big {
+  color: var(--brand-1);
+  margin-bottom: 10px;
+}
+</style>

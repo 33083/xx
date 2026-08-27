@@ -1,0 +1,326 @@
+/* ============================================================
+   全局设计变量：现代浅色渐变主题（靛紫渐变 + 玻璃拟态）
+   ============================================================ */
+:root {
+  --brand-1: #6366f1;
+  --brand-2: #8b5cf6;
+  --brand-3: #a78bfa;
+  --brand-grad: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --brand-grad-hover: linear-gradient(135deg, #6d6ff4 0%, #9667fa 100%);
+  --brand-grad-soft: linear-gradient(135deg, #eef2ff 0%, #fdf4ff 100%);
+
+  --bg-grad: linear-gradient(160deg, #eef2ff 0%, #f6f4ff 45%, #fdf2ff 100%);
+
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.65);
+  --card-shadow: 0 8px 30px rgba(99, 102, 241, 0.1);
+  --card-shadow-hover: 0 14px 40px rgba(99, 102, 241, 0.18);
+
+  --text-main: #1f2329;
+  --text-sub: #6b7280;
+
+  /* Element Plus 主题色 -> 靛紫渐变主色 */
+  --el-color-primary: #6366f1;
+  --el-color-primary-light-3: #818cf8;
+  --el-color-primary-light-5: #a5b4fc;
+  --el-color-primary-light-7: #c7d2fe;
+  --el-color-primary-light-8: #dde3ff;
+  --el-color-primary-light-9: #eef2ff;
+  --el-color-primary-dark-2: #4f46e5;
+
+  --el-border-radius-base: 10px;
+  --el-border-radius-small: 8px;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  color: var(--text-main);
+  background: var(--bg-grad);
+  background-attachment: fixed;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.25);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.45);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 毛玻璃面板（通用工具类） */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--card-shadow);
+}
+
+/* 渐变文字 */
+.grad-text {
+  background: var(--brand-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ---------- Element Plus 组件级美化 ---------- */
+
+/* 卡片 -> 玻璃卡片 */
+.el-card {
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 16px !important;
+  background: var(--glass-bg) !important;
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  box-shadow: var(--card-shadow);
+}
+.el-card.is-always-shadow,
+.el-card.is-hover-shadow:focus,
+.el-card.is-hover-shadow:hover {
+  box-shadow: var(--card-shadow);
+}
+
+/* 主按钮 -> 渐变 */
+.el-button--primary {
+  background-image: var(--brand-grad) !important;
+  border: none !important;
+  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.28);
+  color: #fff !important;
+}
+.el-button--primary:hover,
+.el-button--primary:focus {
+  background-image: var(--brand-grad-hover) !important;
+  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.36);
+}
+.el-button--primary.is-disabled {
+  background-image: linear-gradient(135deg, #a5a6f8, #c4b5fd) !important;
+  box-shadow: none;
+}
+
+/* 输入框 / 文本域 */
+.el-input__wrapper,
+.el-textarea__inner {
+  border-radius: 10px !important;
+  background: rgba(255, 255, 255, 0.85) !important;
+  box-shadow: 0 0 0 1px #e4e7f0 inset !important;
+}
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1.5px var(--brand-1) inset !important;
+}
+
+/* 表格 */
+.el-table {
+  border-radius: 12px;
+  overflow: hidden;
+  --el-table-header-bg-color: #f4f5ff;
+  --el-table-header-text-color: #4b5563;
+}
+.el-table th.el-table__cell {
+  font-weight: 600;
+}
+
+/* 弹窗 */
+.el-dialog {
+  border-radius: 16px !important;
+  box-shadow: var(--card-shadow-hover) !important;
+}
+.el-dialog__header {
+  border-bottom: 1px solid #eef0f6;
+  margin-right: 0 !important;
+}
+
+/* 标签页 */
+.el-tabs__item.is-active {
+  color: var(--brand-1);
+  font-weight: 600;
+}
+.el-tabs__active-bar {
+  background: var(--brand-grad);
+}
+.el-tabs__item:hover {
+  color: var(--brand-1);
+}
+
+/* 消息气泡 / 提示 */
+.el-message {
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+}
+
+/* 下拉菜单 */
+.el-popper.is-light {
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+}
+
+/* 分页 / radio */
+.el-radio-button__original-radio:checked + .el-radio-button__inner {
+  background-color: var(--brand-1);
+  border-color: var(--brand-1);
+  box-shadow: -1px 0 0 0 var(--brand-1);
+}
+
+/* ============================================================
+   暗色模式（html.dark）：覆盖全局变量 + Element 组件 + 关键页面类
+   ============================================================ */
+html.dark {
+  --brand-1: #818cf8;
+  --brand-2: #a78bfa;
+  --brand-3: #c4b5fd;
+  --brand-grad: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --brand-grad-hover: linear-gradient(135deg, #6d6ff4 0%, #9667fa 100%);
+  --brand-grad-soft: linear-gradient(135deg, rgba(99, 102, 241, 0.16) 0%, rgba(139, 92, 246, 0.14) 100%);
+
+  --bg-grad: linear-gradient(160deg, #0f1220 0%, #151327 45%, #1b1029 100%);
+
+  --glass-bg: rgba(30, 32, 48, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --card-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+  --card-shadow-hover: 0 14px 40px rgba(0, 0, 0, 0.55);
+
+  --text-main: #e5e7eb;
+  --text-sub: #9ca3af;
+
+  --el-color-primary: #818cf8;
+  --el-color-primary-light-3: #6d6ff4;
+  --el-color-primary-light-5: #5b5bd6;
+  --el-color-primary-light-7: #3f3f98;
+  --el-color-primary-light-8: #2c2c6e;
+  --el-color-primary-light-9: #1e1e4d;
+  --el-color-primary-dark-2: #a5b4fc;
+}
+
+/* Element 组件暗色底（配合 element-plus dark css-vars） */
+html.dark .el-input__wrapper,
+html.dark .el-textarea__inner {
+  background: rgba(40, 42, 60, 0.9) !important;
+  box-shadow: 0 0 0 1px #2c2e44 inset !important;
+}
+html.dark .el-card {
+  background: rgba(30, 32, 48, 0.72) !important;
+}
+html.dark .el-table {
+  --el-table-header-bg-color: #22243a;
+  --el-table-header-text-color: #c7c9d9;
+  --el-table-border-color: #2c2e44;
+  --el-table-row-hover-bg-color: #262840;
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+}
+html.dark .el-dialog {
+  background: #1e2030;
+}
+html.dark .el-tabs__item {
+  color: #9ca3af;
+}
+html.dark .el-tabs__item.is-active {
+  color: #a5b4fc;
+}
+html.dark .el-empty__description p {
+  color: #9ca3af;
+}
+
+/* 关键页面类覆盖（组件 scoped 样式，需 !important） */
+html.dark .side,
+html.dark .main,
+html.dark .admin-page,
+html.dark .docs-page {
+  background: rgba(30, 32, 48, 0.72) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+html.dark .side-head {
+  border-bottom-color: #2c2e44 !important;
+}
+html.dark .conv-item:hover {
+  background: rgba(129, 140, 248, 0.12) !important;
+}
+html.dark .search-item {
+  background: rgba(40, 42, 60, 0.8) !important;
+}
+html.dark .bubble.assistant {
+  background: #22243a !important;
+  color: #e5e7eb !important;
+  border-color: #2c2e44 !important;
+}
+html.dark .composer {
+  background: rgba(30, 32, 48, 0.6) !important;
+  border-top-color: #2c2e44 !important;
+}
+html.dark .input-box {
+  background: rgba(40, 42, 60, 0.9) !important;
+  border-color: #2c2e44 !important;
+}
+html.dark .mode-chip,
+html.dark .cat-opt,
+html.dark .tool-chip,
+html.dark .fu-chip,
+html.dark .suggest {
+  background: #2a2c42 !important;
+  border-color: #343650 !important;
+  color: #b8bacb !important;
+}
+html.dark .cat-opt.active {
+  color: #fff !important;
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
+}
+html.dark .refs {
+  background: rgba(99, 102, 241, 0.14) !important;
+  border-color: #343650 !important;
+}
+html.dark .ref-src {
+  background: #2c2e44 !important;
+  color: #9ca3af !important;
+}
+html.dark .ref-item,
+html.dark .rag-notice,
+html.dark .fu-label,
+html.dark .conv-meta {
+  color: #9ca3af !important;
+}
+html.dark .msg-image img {
+  border-color: #2c2e44 !important;
+}
+html.dark .msg-actions .el-button {
+  color: #9ca3af !important;
+}
+html.dark .stat-card {
+  background: rgba(40, 42, 60, 0.85) !important;
+  border-color: #2c2e44 !important;
+}
+html.dark .ico-btn {
+  background: #2a2c42 !important;
+  border-color: #343650 !important;
+}
+html.dark .head-ico {
+  border-color: #343650 !important;
+  color: #9ca3af !important;
+}
+html.dark .welcome-sub,
+html.dark .side-title {
+  color: #9ca3af !important;
+}
+html.dark .empty-upload :deep(.el-upload-dragger) {
+  background: rgba(40, 42, 60, 0.5) !important;
+  border-color: #343650 !important;
+}
+

@@ -1,0 +1,68 @@
+# 数据层服务：MySQL + Redis + Chroma 向量库
+# 用法：docker compose up -d
+# 停止：docker compose down
+# 清空数据：docker compose down -v
+
+name: campus-assistant
+
+# 国内环境默认使用 DaoCloud 镜像代理加速拉取
+# 如需直连 Docker Hub，去掉 docker.m.daocloud.io/ 前缀即可
+x-mirror: &mirror "docker.m.daocloud.io/"
+
+services:
+  mysql:
+    image: ${MIRROR_PREFIX:-}mysql:8.0
+    container_name: campus-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: campus123
+      MYSQL_DATABASE: campus_assistant
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pcampus123"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: ${MIRROR_PREFIX:-}redis:7-alpine
+    container_name: campus-redis
+    restart: unless-stopped
+    # 开发期不开密码；要加密码用 redis-server --requirepass xxx
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  chroma:
+    # 向量库：RAG 文档检索（客户端为 chromadb 1.5.9，服务器需同版本以完整支持 v2 路由）
+    image: ${MIRROR_PREFIX:-}chromadb/chroma:1.5.9
+    container_name: campus-chroma
+    restart: unless-stopped
+    environment:
+      IS_PERSISTENT: "TRUE"
+      PERSIST_DIRECTORY: /chroma/chroma
+      ANONYMIZED_TELEMETRY: "FALSE"
+    ports:
+      - "8001:8000"   # 避开 FastAPI 的 8000
+    volumes:
+      - chroma_data:/chroma/chroma
+
+volumes:
+  mysql_data:
+  redis_data:
+  chroma_data:

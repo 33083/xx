@@ -1,0 +1,14 @@
+{
+  "name": "学习求职助手",
+  "short_name": "求职助手",
+  "description": "大学生学习与求职智能助手：知识库 RAG、多模态、联网搜索、技能市场",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef2ff",
+  "theme_color": "#6366f1",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
