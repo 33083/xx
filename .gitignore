@@ -50,3 +50,6 @@ build/
 # 调试残留
 tmp_test/
 login.json
+
+# Office 临时锁文件
+~$*
