@@ -1,7 +1,7 @@
 """用户模型。"""
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base, BigInt
@@ -17,6 +17,7 @@ class User(Base):
     nickname: Mapped[str | None] = mapped_column(String(64), nullable=True, comment="昵称")
     avatar: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="头像 URL")
     role: Mapped[str] = mapped_column(String(16), default="student", comment="角色: student/admin")
+    profile: Mapped[str | None] = mapped_column(Text, nullable=True, comment="用户画像 JSON（长期记忆）")
     is_active: Mapped[bool] = mapped_column(default=True, comment="是否启用")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

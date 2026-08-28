@@ -56,6 +56,7 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _migrate_documents_md5()
+    _migrate_columns()
 
 
 def _migrate_documents_md5() -> None:
@@ -70,3 +71,26 @@ def _migrate_documents_md5() -> None:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE documents ADD COLUMN md5 VARCHAR(64)"))
         print("[migrate] documents.md5 column added")
+
+
+def _migrate_columns() -> None:
+    """轻量迁移：给 users/conversations 补长期记忆列（create_all 不会改旧表）。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    add_sqls: list[tuple[str, str]] = []
+    if "users" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("users")}
+        if "profile" not in cols:
+            add_sqls.append(("users", "profile"))
+    if "conversations" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("conversations")}
+        if "summary" not in cols:
+            add_sqls.append(("conversations", "summary"))
+    if not add_sqls:
+        return
+    with engine.begin() as conn:
+        for table, col in add_sqls:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} TEXT NULL"))
+    print(f"[migrate] added columns: {add_sqls}")
+

@@ -25,6 +25,7 @@ class Conversation(Base):
         String(32), default="chat", comment="agent 类型: chat/react/rag"
     )
     message_count: Mapped[int] = mapped_column(Integer, default=0, comment="消息数")
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True, comment="会话摘要（长期记忆）")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

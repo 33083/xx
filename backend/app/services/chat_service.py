@@ -346,9 +346,18 @@ def _prepare_messages(user_id: int, req: ChatRequest, db: Session, cid: int):
     # 历史：按字符预算取最近若干轮 user/assistant 对，超出预算自动截断
     hist, history_truncated = _load_recent_history(cid, db, limit=20)
 
+    # 长期记忆：会话摘要 + 用户画像（尽力而为，失败不影响主流程）
+    from app.services import memory_service
+    conv = db.get(Conversation, cid)
+    summary_block = memory_service.format_summary_block(conv.summary if conv else None)
+    usr = db.get(User, user_id)
+    profile_block = memory_service.format_profile_block(usr.profile if usr else None)
+
     sys_txt = (
         "你是「大学生学习与求职智能助手」。角色：耐心、专业、不编造事实。\n"
         + (role_line + "\n" if role_line else "")
+        + (profile_block + "\n" if profile_block else "")
+        + (summary_block + "\n" if summary_block else "")
         + "规则：\n"
         "1. 如果下面提供了知识库片段，回答尽量以片段内容为依据，并尽量引用（如\"据《xxx》文档…\"）。\n"
         "2. 如果知识库没覆盖，直说\"我没有找到相关资料\"，然后给出通用建议，不要编造。\n"
@@ -361,7 +370,7 @@ def _prepare_messages(user_id: int, req: ChatRequest, db: Session, cid: int):
         "   - 调用搜索工具时 query 参数必须用中文原文（用户问的就是中文），不要翻译成英文。\n"
     )
     if history_truncated:
-        sys_txt += "\n（提示：由于历史消息过长，较早的对话已被截断，仅保留最近内容。）\n"
+        sys_txt += "\n（提示：由于历史消息过长，较早的对话已被截断，仅保留最近内容；但上面的历史摘要已保留关键信息。）\n"
     messages: list = [SystemMessage(content=sys_txt)]
 
     # 决定是否使用视觉模型：req.image_url 存在 且 当前配了可用视觉 LLM
@@ -622,6 +631,16 @@ def chat_sync(user: User, req: ChatRequest, db: Session) -> ChatResponse:
     db.commit()
     db.refresh(assistant_msg)
 
+    # 长期记忆：更新会话摘要 + 用户画像（尽力而为）
+    try:
+        from app.services import memory_service
+        memory_service.update_user_profile(db, user.id, req.message)
+        memory_service.update_conversation_summary(
+            db, c.id, "用户：" + req.message + "\n助手：" + answer
+        )
+    except Exception:
+        pass
+
     return ChatResponse(
         conversation_id=c.id,
         message_id=assistant_msg.id,
@@ -783,6 +802,16 @@ async def chat_stream(user: User, req: ChatRequest, db: Session) -> AsyncIterato
     c.updated_at = datetime.now()
     db.commit()
     db.refresh(assistant_msg)
+
+    # 长期记忆：更新会话摘要 + 用户画像（尽力而为，失败不影响 SSE 收尾）
+    try:
+        from app.services import memory_service
+        memory_service.update_user_profile(db, user.id, req.message)
+        memory_service.update_conversation_summary(
+            db, c.id, "用户：" + req.message + "\n助手：" + answer
+        )
+    except Exception:
+        pass
 
     yield _sse("end", json.dumps({
         "conversation_id": c.id,
