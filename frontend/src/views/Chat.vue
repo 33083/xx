@@ -211,6 +211,12 @@
             <div class="input-toolbar">
               <span class="mode-chip" :class="{ on: docMode }" @click="toggleDocMode">📄 文档</span>
               <span class="mode-chip" :class="{ on: webSearch }" @click="toggleWebSearch">🌐 联网</span>
+              <span
+                v-if="ragCategory === 'interview'"
+                class="mode-chip grill-chip"
+                :class="{ on: grillMode }"
+                @click="toggleGrillMode"
+              >🎯 面试拷问</span>
             </div>
             <div v-if="docMode" class="cat-menu">
               <span
@@ -218,7 +224,7 @@
                 :key="opt.value"
                 class="cat-opt"
                 :class="{ active: ragCategory === opt.value }"
-                @click="ragCategory = opt.value"
+                @click="ragCategory = opt.value; onCategoryChange()"
               >{{ opt.label }}</span>
             </div>
             <el-input
@@ -289,6 +295,8 @@ const sending = ref(false)
 const docMode = ref(true)
 const webSearch = ref(false)
 const ragCategory = ref('all')
+// 面试拷问模式（grill-me）：仅面试分类下启用
+const grillMode = ref(false)
 // 分类选项：点击「文档」二字展开选择
 const catOptions = [
   { label: '全部分类', value: 'all' },
@@ -328,6 +336,17 @@ function toggleDocMode() {
 
 function toggleWebSearch() {
   if (!sending.value) webSearch.value = !webSearch.value
+}
+
+function toggleGrillMode() {
+  if (sending.value) return
+  grillMode.value = !grillMode.value
+  // 切换分类时若已开启拷问，自动关闭（拷问只在面试分类生效）
+}
+
+// 切换分类：离开面试分类时自动关闭拷问模式
+function onCategoryChange() {
+  if (ragCategory.value !== 'interview') grillMode.value = false
 }
 
 // 多模态：待发送的图片
@@ -650,7 +669,7 @@ async function send() {
         use_rag: docMode.value,
         use_web_search: webSearch.value,
         rag_category: docMode.value ? ragCategory.value : 'all',
-        agent_type: 'rag',
+        agent_type: grillMode.value ? 'grill' : 'rag',
       },
       ({ event, payload }) => {
         if (event === 'start') {

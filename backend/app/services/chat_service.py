@@ -49,7 +49,7 @@ def _coerce_agent_type(v) -> str:
     if isinstance(v, AgentType):
         return v.value
     s = str(v or "rag").strip().lower()
-    if s not in {"chat", "rag", "react"}:
+    if s not in {"chat", "rag", "react", "grill"}:
         s = "rag"
     return s
 
@@ -341,7 +341,22 @@ def _prepare_messages(user_id: int, req: ChatRequest, db: Session, cid: int):
         "resume": "当前分类【简历】：请扮演资深简历优化顾问，基于用户简历指出问题、给出具体修改建议（措辞/量化/结构）、提炼个人亮点；不要编造简历中没有的信息。",
         "interview": "当前分类【面经】：请扮演面试准备教练，基于面经梳理高频考点、给出模拟面试题与答题思路、提醒注意事项。",
     }
-    role_line = rag_roles.get(req.rag_category, "")
+    # 面试拷问模式（grill-me）：苏格拉底式面试官，一次一个问题、层层深入
+    grill_role = (
+        "当前处于【面试拷问模式 Grill Me】。请扮演一位严格但专业的面试官，对用户进行"
+        "苏格拉底式拷问式面试，目标是通过层层追问帮用户查漏补缺、把知识讲清楚。\n"
+        "行为规则：\n"
+        "1. **一次只问一个问题**，绝不同时抛出多个问题。\n"
+        "2. 从基础问题开始，根据用户上一轮的回答逐层深入：表面 → 细节 → 原理 → 边界/异常 → 综合应用。\n"
+        "3. 每一问都应给出你建议的【推荐答案要点】（简短），让用户确认、纠正或补充，而不是从零写答案。\n"
+        "4. 持续追踪用户暴露的知识盲点，优先深挖这些薄弱处；用户答错或含糊时，温和点破并追问到底。\n"
+        "5. 当用户说\"总结\"/\"结束\"/\"复盘\"时，输出拷问总结：覆盖的知识点、暴露的薄弱点、建议复习清单。\n"
+        "6. 结合知识库面经出题，优先高频考点；若检索到相关面经片段，问题应基于片段。\n"
+    )
+    if getattr(req, "agent_type", None) == "grill" or (req.agent_type and req.agent_type.value == "grill"):
+        role_line = grill_role
+    else:
+        role_line = rag_roles.get(req.rag_category, "")
 
     # 历史：按字符预算取最近若干轮 user/assistant 对，超出预算自动截断
     hist, history_truncated = _load_recent_history(cid, db, limit=20)

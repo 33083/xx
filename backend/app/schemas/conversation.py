@@ -10,6 +10,7 @@ class AgentType(str, Enum):
     CHAT = "chat"
     RAG = "rag"
     REACT = "react"
+    GRILL = "grill"  # 面试拷问模式（苏格拉底式面试官）
 
 
 class ConversationCreate(BaseModel):
