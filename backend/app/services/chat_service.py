@@ -330,10 +330,83 @@ def _prepare_messages(user_id: int, req: ChatRequest, db: Session, cid: int):
 
     refs = []
     rag_ok = True
+    is_grill = getattr(req, "agent_type", None) == "grill" or (
+        req.agent_type and req.agent_type.value == "grill"
+    )
     if req.use_rag:
-        out = rag_service.rag_search(user_id, req.message, category=req.rag_category)
-        refs = out.hits
-        rag_ok = out.rag_ok
+        if is_grill:
+            # grill 模式：合并「面试经验 + 简历」两个分类的检索结果。
+            # 注意：简历是静态文本，和"开始拷问 XX 面试"这种开场白语义距离天然偏大，
+            # 若直接走 rag_search（带 RAG_MIN_SCORE=1.5 过滤），简历片段会被全部丢掉，
+            # 面试官始终"看不到"简历。所以这里拆成两次底层查询，各自独立阈值：
+            #   - interview（面经）：沿用默认阈值，保证题目相关性；
+            #   - resume（简历）：放宽到 GRILL_RESUME_MIN_SCORE，优先保证能命中。
+            from app.services.rag_service import _docs_to_refs, _is_collection_missing
+            from app.core.vectorstore import get_user_vectorstore, get_shared_vectorstore
+            GRILL_RESUME_MIN_SCORE = max(settings.RAG_MIN_SCORE * 1.8, 2.3)
+            k = settings.RAG_TOP_K
+
+            def _raw_search(category: str, min_score: float, limit: int):
+                where = {"category": category}
+                rag_ok_flag = False
+                user_hits, shared_hits = [], []
+                try:
+                    vs_u = get_user_vectorstore(user_id, create_if_missing=False)
+                    user_hits = vs_u.similarity_search_with_score(req.message, k=limit, where=where)
+                    rag_ok_flag = True
+                except Exception as e:
+                    if _is_collection_missing(e):
+                        rag_ok_flag = True
+                try:
+                    vs_s = get_shared_vectorstore()
+                    shared_hits = vs_s.similarity_search_with_score(req.message, k=limit, where=where)
+                    rag_ok_flag = True
+                except Exception:
+                    pass
+                refs_list = _docs_to_refs(user_hits, source="user") + _docs_to_refs(shared_hits, source="shared")
+                if min_score > 0:
+                    refs_list = [r for r in refs_list if r.score <= min_score]
+                refs_list.sort(key=lambda x: x.score)
+                return refs_list[:limit], rag_ok_flag
+
+            iv_hits, iv_ok = _raw_search("interview", settings.RAG_MIN_SCORE, k)
+            rs_hits, rs_ok = _raw_search("resume", GRILL_RESUME_MIN_SCORE, k)
+            # ---- 额外强制：用户本人简历分类的 top-2，不受全局阈值限制 ----
+            # 因为用户开场白通常是"开始拷问前端"这类泛句，和自己简历的语义距离
+            # 必然偏大，GRILL_RESUME_MIN_SCORE 仍可能把它过滤掉；而公共简历库
+            # 反而容易命中，导致面试官读到的是模板而不是用户本人的经历。
+            # 所以这里再做一次"只看用户库 resume 分类"的查询，阈值放得非常宽，
+            # 拿到用户最相关的 2 条简历片段，优先保留。
+            my_resume_hits: list = []
+            try:
+                vs_u2 = get_user_vectorstore(user_id, create_if_missing=False)
+                _uh = vs_u2.similarity_search_with_score(req.message, k=2, where={"category": "resume"})
+                my_resume_hits = _docs_to_refs(_uh, source="我的简历")
+                # 对"我的简历"放最宽阈值（通常不超过 3 即可覆盖真实简历片段）
+                my_resume_hits = [r for r in my_resume_hits if r.score <= 3.0]
+            except Exception:
+                pass
+            # 简历片段打特殊来源标签
+            for r in rs_hits:
+                if r.source == "user":
+                    r.source = "我的简历"
+                elif r.source == "shared":
+                    r.source = "公共简历库"
+            # 合并策略：用户简历优先占位，其余留给面经和公共简历
+            merged = iv_hits + rs_hits + my_resume_hits
+            merged.sort(key=lambda x: x.score)
+            refs = merged[:k]
+            # 保底：如果用户本人真的上传了简历（有 doc），一定至少塞一条进去
+            if my_resume_hits and not any(r.source == "我的简历" and r in my_resume_hits for r in refs):
+                refs[-1] = my_resume_hits[0]
+            # 至少有简历类内容（本人或公共）
+            elif rs_hits and not any(r.source in ("我的简历", "公共简历库") for r in refs):
+                refs[-1] = rs_hits[0]
+            rag_ok = iv_ok and rs_ok
+        else:
+            out = rag_service.rag_search(user_id, req.message, category=req.rag_category)
+            refs = out.hits
+            rag_ok = out.rag_ok
     ctx_block = rag_service.build_context_block(refs)
 
     rag_roles = {
@@ -352,6 +425,9 @@ def _prepare_messages(user_id: int, req: ChatRequest, db: Session, cid: int):
         "4. 持续追踪用户暴露的知识盲点，优先深挖这些薄弱处；用户答错或含糊时，温和点破并追问到底。\n"
         "5. 当用户说\"总结\"/\"结束\"/\"复盘\"时，输出拷问总结：覆盖的知识点、暴露的薄弱点、建议复习清单。\n"
         "6. 结合知识库面经出题，优先高频考点；若检索到相关面经片段，问题应基于片段。\n"
+        "7. 如果检索到了用户简历片段，优先针对简历里的项目经历/技能栈出题，\n"
+        "   例如\"你简历提到做过 XXX，能讲讲 XXX 是怎么实现的？为什么这样选型？\"\n"
+        "   不要凭空编造简历中没有的经历；用户答不上来时，引导他反思简历措辞是否过度包装。\n"
     )
     if getattr(req, "agent_type", None) == "grill" or (req.agent_type and req.agent_type.value == "grill"):
         role_line = grill_role
