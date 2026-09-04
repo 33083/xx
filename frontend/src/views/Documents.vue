@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="docs-page">
     <el-card>
       <template #header>
@@ -110,10 +110,19 @@
 
     <!-- 预览弹窗 -->
     <el-dialog v-model="previewVisible" :title="previewTitle" width="80%" top="5vh" destroy-on-close>
-      <div v-loading="previewLoading" class="preview-body">
+      <div v-loading="previewLoading" :loading-text="previewLoadingText" class="preview-body">
+        <div v-if="previewError" class="preview-error" role="alert">
+          <el-alert
+            :title="previewError"
+            type="error"
+            show-icon
+            :closable="false"
+            description="提示：大文件预览需等待解析，超时可重试；Word 文档可先在本地打开查看，也可以到聊天界面让 AI 提炼摘要。"
+          />
+        </div>
         <iframe v-if="!previewLoading && previewUrl" :src="previewUrl" class="preview-frame" />
         <pre v-else-if="!previewLoading && previewText" class="preview-text">{{ previewText }}</pre>
-        <el-empty v-else-if="!previewLoading" description="暂不支持预览该类型" />
+        <el-empty v-else-if="!previewLoading && !previewError" description="暂不支持预览该类型" />
       </div>
     </el-dialog>
 
@@ -156,9 +165,11 @@ const pendingQueue = ref([])
 // 预览
 const previewVisible = ref(false)
 const previewLoading = ref(false)
+const previewLoadingText = ref('加载中...')
 const previewTitle = ref('')
 const previewUrl = ref('')
 const previewText = ref('')
+const previewError = ref('')
 let currentObjectUrl = ''
 
 // 编辑
@@ -311,23 +322,36 @@ function exportList() {
 async function openPreview(row) {
   previewVisible.value = true
   previewLoading.value = true
+  previewLoadingText.value = '正在加载预览...'
   previewTitle.value = row.title
   previewUrl.value = ''
   previewText.value = ''
+  previewError.value = ''
+  if (currentObjectUrl) {
+    URL.revokeObjectURL(currentObjectUrl)
+    currentObjectUrl = ''
+  }
   try {
+    // 第一步：拿预览元信息（返回 { file_type, preview_url?, text? }）
+    previewLoadingText.value = '正在解析文档内容...'
     const data = await docApi.previewDocument(row.id)
-    if (data.file_type === 'pdf' && data.preview_url) {
+    if (data.file_type === 'pdf') {
+      // PDF：统一走带 token 的 axios Blob 下载，再用 ObjectURL 嵌入 iframe。
+      // 注意：不能把 /documents/{id}/file 当作 url 直接塞给 iframe，因为 iframe 发的原生 HTTP GET
+      //      不会带 Authorization 头，会触发 401 → 被 request.js 误判成"网络已断开"。
+      previewLoadingText.value = '正在加载 PDF 文件...'
       const blob = await docApi.getFileBlob(row.id)
-      if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl)
       currentObjectUrl = URL.createObjectURL(blob)
       previewUrl.value = currentObjectUrl
     } else {
+      // 其他格式：返回 text（Word/TXT/MD/PPTX 等）
       previewText.value = data.text || ''
     }
   } catch (e) {
-    // request 拦截器已提示
+    previewError.value = e.friendlyMsg || e.message || '预览失败，请稍后重试'
   } finally {
     previewLoading.value = false
+    previewLoadingText.value = '加载中...'
   }
 }
 
@@ -401,6 +425,9 @@ onBeforeUnmount(() => {
 }
 .preview-body {
   min-height: 200px;
+}
+.preview-error {
+  margin-bottom: 12px;
 }
 .preview-frame {
   width: 100%;

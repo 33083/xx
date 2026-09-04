@@ -1,5 +1,8 @@
-"""文档模块路由：上传 / 列表 / 删除 / 检索片段。"""
+﻿"""文档模块路由：上传 / 列表 / 删除 / 检索片段。"""
+import mimetypes
 import os
+import re
+import urllib.parse
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -25,9 +28,40 @@ from app.services import document_service, rag_service
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
+def _build_storage_path(rel_or_abs: str) -> Path:
+    """DB 中相对路径转绝对路径（避免 uvicorn cwd 不同导致文件找不到）。"""
+    p = Path(rel_or_abs)
+    if p.is_absolute():
+        return p
+    base = Path(settings.DOC_STORAGE_DIR)
+    if not base.is_absolute():
+        backend_root = Path(__file__).resolve().parents[3]
+        base = backend_root / settings.DOC_STORAGE_DIR
+    candidate = base / rel_or_abs
+    if candidate.exists():
+        return candidate
+    if p.exists():
+        return p.resolve()
+    return candidate  # 上层用 Path.exists() 判 404
+
+
+def _rfc5987_cd(filename: str, *, inline: bool = True) -> str:
+    """Content-Disposition: ASCII fallback filename + RFC 5987 filename*=UTF-8''.
+
+    原写法 filename="中文.pdf" 让 Starlette 用 latin-1 编码 header 抛：
+      UnicodeEncodeError: 'latin-1' codec can't encode characters → 500 Internal Server Error
+    修复：filename= 里非 ASCII 换成下划线作为旧浏览器 fallback，
+          实际中文字符文件名走 filename*=UTF-8'' 百分号编码（RFC 5987，所有现代浏览器支持）。
+    """
+    safe_ascii = re.sub(r"[^\x20-\x7E]", "_", filename) or "download"
+    encoded = urllib.parse.quote(filename, safe="")
+    kind = "inline" if inline else "attachment"
+    return f'{kind}; filename="{safe_ascii}"; filename*=UTF-8\'\'{encoded}'
+
+
 @router.post("/upload", response_model=ApiResponse[DocumentUploaded])
 async def upload_document(
-    file: UploadFile = File(..., description="PDF/TXT/MD"),
+    file: UploadFile = File(..., description="PDF/TXT/MD/DOCX/PPTX..."),
     category: str | None = Form(None, description="material/resume/interview，留空按文件名猜"),
     description: str | None = Form(None, description="备注"),
     current: User = Depends(get_current_user),
@@ -134,10 +168,28 @@ def download_my_doc_file(
     doc = document_service.get_document(current.id, doc_id, db)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在或无权访问")
-    path = Path(doc.file_path)
+    path = _build_storage_path(doc.file_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="文件已丢失")
-    media = {"pdf": "application/pdf"}.get(doc.file_type, "application/octet-stream")
-    resp = FileResponse(path, media_type=media, filename=os.path.basename(doc.file_path))
-    resp.headers["Content-Disposition"] = 'inline; filename="{basename}"'.format(basename=os.path.basename(doc.file_path))
-    return resp
+    media_map = {
+        "pdf": "application/pdf",
+        "txt": "text/plain; charset=utf-8",
+        "md": "text/markdown; charset=utf-8",
+        "markdown": "text/markdown; charset=utf-8",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "doc": "application/msword",
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }
+    media_type = media_map.get(doc.file_type) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    filename = os.path.basename(doc.file_path)
+    # 不要手动写 resp.headers["Content-Disposition"] = 'inline; filename="中文.pdf"'
+    # Starlette 给 header 赋值时用 latin-1 编码字符串，中文字符会抛：
+    #   UnicodeEncodeError: "latin-1" codec can't encode characters → 500 Internal Server Error
+    # 直接用 Starlette 自带的 content_disposition_type + filename 参数，
+    # Starlette 内部会自动生成 RFC 5987 的 filename*=utf-8'<百分号编码> 格式，完全没有中文问题。
+    return FileResponse(
+        path=path,
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type="inline",
+    )
