@@ -120,15 +120,14 @@
             description="提示：大文件预览需等待解析，超时可重试；Word/PPT 可先在本地打开查看，也可以到聊天界面让 AI 提炼摘要。"
           />
         </div>
-        <!-- PDF：三层兜底（object → iframe → 纯文本提示），避免 Chrome PDF 插件被禁用 / IDM 拦截后直接空白 -->
+        <!-- PDF：object + iframe 两层渲染，失败提示放 iframe 外面（避免 <p> 作为 <iframe> 子节点违反 HTML 规范触发 Vite hydrate warning） -->
         <template v-if="!previewLoading && previewUrl">
-          <object :data="previewUrl" type="application/pdf" class="preview-frame">
-            <iframe :src="previewUrl" class="preview-frame">
-              <p class="preview-empty">
-                当前浏览器 / 扩展拦截了 PDF 预览。请直接点击下方「下载此文件」按钮用本地 PDF 阅读器打开。
-              </p>
-            </iframe>
+          <object :data="previewUrl" type="application/pdf" class="preview-frame" aria-label="PDF预览">
+            <iframe :src="previewUrl" class="preview-frame"></iframe>
           </object>
+          <div class="preview-empty" role="note">
+            ⚠️ 如果上方预览区域是一片空白，说明浏览器的 PDF 阅读器被 IDM 或扩展拦截了。请直接点击右下角的「下载此文件」按钮，用本地 WPS / Adobe Reader 打开。
+          </div>
         </template>
         <pre v-else-if="!previewLoading && previewText" class="preview-text">{{ previewText }}</pre>
         <el-empty v-else-if="!previewLoading && !previewError" description="暂不支持预览该类型，点击下方按钮直接下载。" />
@@ -197,6 +196,7 @@ const previewError = ref('')
 const previewFileType = ref('')
 const currentDocId = ref(null)
 const downloadingFile = ref(false)
+let openingPreview = false
 let currentObjectUrl = ''
 
 // 编辑
@@ -347,6 +347,8 @@ function exportList() {
 }
 
 async function openPreview(row) {
+  if (openingPreview) return
+  openingPreview = true
   previewVisible.value = true
   previewLoading.value = true
   previewLoadingText.value = '正在加载预览...'
@@ -381,6 +383,7 @@ async function openPreview(row) {
   } finally {
     previewLoading.value = false
     previewLoadingText.value = '加载中...'
+    openingPreview = false
   }
 }
 
