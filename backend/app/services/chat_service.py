@@ -344,7 +344,8 @@ def _prepare_messages(user_id: int, req: ChatRequest, db: Session, cid: int):
             from app.services.rag_service import _docs_to_refs, _is_collection_missing
             from app.core.vectorstore import get_user_vectorstore, get_shared_vectorstore
             GRILL_RESUME_MIN_SCORE = max(settings.RAG_MIN_SCORE * 1.8, 2.3)
-            k = settings.RAG_TOP_K
+            # grill 模式专属：参考位从 4 → 8，给『我的简历』至少腾 2 个位置
+            k = max(settings.RAG_TOP_K, 8)
 
             def _raw_search(category: str, min_score: float, limit: int):
                 where = {"category": category}
@@ -396,11 +397,29 @@ def _prepare_messages(user_id: int, req: ChatRequest, db: Session, cid: int):
             merged = iv_hits + rs_hits + my_resume_hits
             merged.sort(key=lambda x: x.score)
             refs = merged[:k]
-            # 保底：如果用户本人真的上传了简历（有 doc），一定至少塞一条进去
-            if my_resume_hits and not any(r.source == "我的简历" and r in my_resume_hits for r in refs):
-                refs[-1] = my_resume_hits[0]
-            # 至少有简历类内容（本人或公共）
-            elif rs_hits and not any(r.source in ("我的简历", "公共简历库") for r in refs):
+            # --- 保底：保证『我的简历』至少占 2 条槽位（面经/公共库再多也挤不掉） ---
+            # 用 (doc_id, chunk_index) 精确匹配身份（避免对象相等判断不靠谱）
+            my_keys = {(r.doc_id, r.chunk_index) for r in my_resume_hits}
+            existing_my = [r for r in refs if (r.doc_id, r.chunk_index) in my_keys]
+            need = max(0, 2 - len(existing_my))
+            if my_resume_hits and need > 0:
+                # 挑出还没进 refs 的我的简历片段
+                extra = [r for r in my_resume_hits if (r.doc_id, r.chunk_index) not in {(x.doc_id, x.chunk_index) for x in existing_my}][:need]
+                # 从 refs 尾部 need 条非我的简历删掉腾位置
+                drop_ixs = []
+                for i in range(len(refs) - 1, -1, -1):
+                    if len(drop_ixs) >= len(extra):
+                        break
+                    r = refs[i]
+                    if (r.doc_id, r.chunk_index) not in my_keys:
+                        drop_ixs.append(i)
+                new_refs = [refs[i] for i in range(len(refs)) if i not in drop_ixs]
+                merged2 = new_refs + extra
+                merged2.sort(key=lambda x: x.score)
+                refs = merged2[:k]
+            # 至少 1 条简历类（本人/公共都行），避免 grill 退化成纯面经刷题
+            has_any_resume = any(r.source in ("我的简历", "公共简历库") for r in refs)
+            if rs_hits and not has_any_resume:
                 refs[-1] = rs_hits[0]
             rag_ok = iv_ok and rs_ok
         else:
@@ -425,9 +444,10 @@ def _prepare_messages(user_id: int, req: ChatRequest, db: Session, cid: int):
         "4. 持续追踪用户暴露的知识盲点，优先深挖这些薄弱处；用户答错或含糊时，温和点破并追问到底。\n"
         "5. 当用户说\"总结\"/\"结束\"/\"复盘\"时，输出拷问总结：覆盖的知识点、暴露的薄弱点、建议复习清单。\n"
         "6. 结合知识库面经出题，优先高频考点；若检索到相关面经片段，问题应基于片段。\n"
-        "7. 如果检索到了用户简历片段，优先针对简历里的项目经历/技能栈出题，\n"
-        "   例如\"你简历提到做过 XXX，能讲讲 XXX 是怎么实现的？为什么这样选型？\"\n"
-        "   不要凭空编造简历中没有的经历；用户答不上来时，引导他反思简历措辞是否过度包装。\n"
+        "7. 开头【信任背书】：你的第一条回复必须先告诉用户，你基于他上传的「我的简历」真实看到了哪些具体的项目名/技能名（例如「我看到你简历里有 CodeRAG / 大学生学习与求职智能助手 两个项目，技术栈包含 Python/FastAPI/Vue3/Chroma/LangChain/SQLite/Docker」），让用户当场核对你是不是真的读过了他的简历。\n"
+        "8. 【第一轮必按用户本人简历出题】第一个问题只能从来源=『我的简历』的项目经历或技能栈里挑一个深挖，绝不可以从面经题库抽题；只有用户明确要求换方向、或者连续两轮答不上来时，才允许扩展到公共面经。\n"
+        "9. 【绝对禁止幻觉 & 严禁问简历外的冷门技术】任何情况下不得询问或提及任何：a) 不在用户本人简历里 b) 不在参考资料中的技术/公司/项目名词，特别是简历中没有出现的 SpringBoot / Kafka / Dubbo / Redis集群 / 分布式事务 / K8s 等热门八股，一律不许主动问；如果面经题目的范围和用户简历重合（比如都有 RAG/向量检索），可以合并深挖，但必须以简历写的技术点为落脚点提问。\n"
+        "10.用户答不上简历中的问题时，先说「这是你简历里写过的内容哦」，再给 3~5 个具体的引导方向；若仍答不上，给出正确做法+温和建议：简历最好写自己真做过、能扛深挖的内容。\n"
     )
     if getattr(req, "agent_type", None) == "grill" or (req.agent_type and req.agent_type.value == "grill"):
         role_line = grill_role

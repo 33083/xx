@@ -666,9 +666,11 @@ async function send() {
         conversation_id: currentId.value,
         message: text || '请描述这张图片',
         image_url: imgUrl || undefined,
-        use_rag: docMode.value,
+        // grill 模式：即使没开📄文档开关也强制走 RAG（否则看不到简历/面经，面试官只会瞎出题）
+        use_rag: docMode.value || grillMode.value,
         use_web_search: webSearch.value,
-        rag_category: docMode.value ? ragCategory.value : 'all',
+        // grill 模式默认走 interview 分类 + 后端内部再合并 resume 分类
+        rag_category: (docMode.value || grillMode.value) ? (grillMode.value ? 'interview' : ragCategory.value) : 'all',
         agent_type: grillMode.value ? 'grill' : 'rag',
       },
       ({ event, payload }) => {
