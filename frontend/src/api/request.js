@@ -86,8 +86,11 @@ request.interceptors.response.use(
             try {
               const json = JSON.parse(reader.result)
               if (json && json.code !== 0) {
-                ElMessage.error(json.msg || '请求失败')
-                reject(new Error(json.msg || '请求失败'))
+                // 重要：抛错时要带原 response.config，
+                // 这样进入 error 拦截器时 !error.config?._silent 才会生效
+                const err = new Error(json.msg || '请求失败')
+                err.config = response.config
+                reject(err)
               } else {
                 resolve(response.data)
               }

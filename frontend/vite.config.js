@@ -53,17 +53,17 @@ export default defineConfig({
     proxy: {
       // 前端开发期把 /api 代理到 FastAPI
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: 'http://localhost:8000',
         changeOrigin: true,
       },
       // 上传的图片静态资源（后端 mount 在 /uploads）
       '/uploads': {
-        target: 'http://127.0.0.1:8000',
+        target: 'http://localhost:8000',
         changeOrigin: true,
       },
       // WebSocket 流式对话
       '/ws': {
-        target: 'ws://127.0.0.1:8000',
+        target: 'ws://localhost:8000',
         ws: true,
       },
     },
