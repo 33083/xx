@@ -1,4 +1,4 @@
-import request from './request'
+﻿import request from './request'
 
 /**
  * 文档库接口
@@ -38,6 +38,8 @@ export function updateDocument(id, payload) {
 export function previewDocument(id) {
   return request.get(`/documents/${id}/preview`, {
     timeout: 120_000,
+    // 错误只交给 Documents.vue 的 catch 以红色 Alert 展示，避免和全局 toast 重复弹"后端接口无法连接"
+    _silent: true,
   })
 }
 
@@ -49,5 +51,6 @@ export function getFileBlob(id) {
   return request.get(`/documents/${id}/file`, {
     responseType: 'blob',
     timeout: 180_000,
+    _silent: true,
   })
 }

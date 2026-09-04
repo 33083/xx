@@ -39,11 +39,19 @@ function _friendlyError(error) {
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     return '网络已断开，请检查连接后重试'
   }
-  if (error.message?.includes('Network Error')) {
-    // 这里的"Network Error"常见于：① Vite dev 代理转发到的后端没启动 ② CORS 预检失败
-    // ③ 用新的 axios baseURL 重写后不应再出现，统一提示更精准
-    const base = error.config?.baseURL || (typeof window !== 'undefined' && window.location.origin + '/api/v1') || '/api/v1'
-    return `后端接口无法连接（${base}）：后端服务未启动或代理异常，请重试`
+  if (error.message?.includes('Network Error') || error.code === 'ERR_NETWORK') {
+    // "Network Error"（axios 1.x）/ "ERR_NETWORK"（axios 1.6+）在浏览器里常见于：
+    //  ① Vite dev 代理转发到的后端 127.0.0.1:8000 没启动
+    //  ② Vite 的 http-proxy ECONNRESET（后端长传输中途断开，比如大 PDF）
+    //  ③ CORS 预检被拦
+    // 把实际请求的 URL 展示给用户方便排查：优先请求 URL，其次 baseURL，再 window.origin
+    const cfg = error.config || {}
+    const urlGuess = cfg.url
+      ? (cfg.baseURL ? (cfg.baseURL + cfg.url).replace(/(https?:\/\/[^\/]+)(?=\/api\/v\d|\/docs)/, '') : cfg.url)
+      : (cfg.baseURL || (typeof window !== 'undefined' ? (window.location.origin + '/api/v1') : '/api/v1'))
+    const proxyTarget = 'http://127.0.0.1:8000'
+    return `后端接口无法连接（${urlGuess}）：Vite 代理转发到 ${proxyTarget} 失败，` +
+      `请确认后端是否已启动（一键启动.bat 或 uvicorn :8000），或稍后重试`
   }
   if (error.message?.includes('CORS') || error.message?.includes('blocked')) {
     return '跨域被阻止，请确认后端服务已启动'

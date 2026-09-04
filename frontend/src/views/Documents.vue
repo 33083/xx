@@ -120,7 +120,8 @@
             description="提示：大文件预览需等待解析，超时可重试；Word 文档可先在本地打开查看，也可以到聊天界面让 AI 提炼摘要。"
           />
         </div>
-        <iframe v-if="!previewLoading && previewUrl" :src="previewUrl" class="preview-frame" />
+        <!-- embed 比 iframe 更适合 blob URL 的 application/pdf：不会触发"重复下载链接"对话框 -->
+        <embed v-if="!previewLoading && previewUrl" :src="previewUrl" type="application/pdf" class="preview-frame" />
         <pre v-else-if="!previewLoading && previewText" class="preview-text">{{ previewText }}</pre>
         <el-empty v-else-if="!previewLoading && !previewError" description="暂不支持预览该类型" />
       </div>
