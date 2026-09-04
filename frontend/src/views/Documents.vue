@@ -109,7 +109,7 @@
     </el-card>
 
     <!-- 预览弹窗 -->
-    <el-dialog v-model="previewVisible" :title="previewTitle" width="80%" top="5vh" destroy-on-close>
+    <el-dialog v-model="previewVisible" :title="previewTitle" width="82%" top="4vh" destroy-on-close class="preview-dialog">
       <div v-loading="previewLoading" :loading-text="previewLoadingText" class="preview-body">
         <div v-if="previewError" class="preview-error" role="alert">
           <el-alert
@@ -117,14 +117,37 @@
             type="error"
             show-icon
             :closable="false"
-            description="提示：大文件预览需等待解析，超时可重试；Word 文档可先在本地打开查看，也可以到聊天界面让 AI 提炼摘要。"
+            description="提示：大文件预览需等待解析，超时可重试；Word/PPT 可先在本地打开查看，也可以到聊天界面让 AI 提炼摘要。"
           />
         </div>
-        <!-- embed 比 iframe 更适合 blob URL 的 application/pdf：不会触发"重复下载链接"对话框 -->
-        <embed v-if="!previewLoading && previewUrl" :src="previewUrl" type="application/pdf" class="preview-frame" />
+        <!-- PDF：三层兜底（object → iframe → 纯文本提示），避免 Chrome PDF 插件被禁用 / IDM 拦截后直接空白 -->
+        <template v-if="!previewLoading && previewUrl">
+          <object :data="previewUrl" type="application/pdf" class="preview-frame">
+            <iframe :src="previewUrl" class="preview-frame">
+              <p class="preview-empty">
+                当前浏览器 / 扩展拦截了 PDF 预览。请直接点击下方「下载此文件」按钮用本地 PDF 阅读器打开。
+              </p>
+            </iframe>
+          </object>
+        </template>
         <pre v-else-if="!previewLoading && previewText" class="preview-text">{{ previewText }}</pre>
-        <el-empty v-else-if="!previewLoading && !previewError" description="暂不支持预览该类型" />
+        <el-empty v-else-if="!previewLoading && !previewError" description="暂不支持预览该类型，点击下方按钮直接下载。" />
       </div>
+      <template #footer>
+        <div class="preview-footer">
+          <span class="preview-hint">
+            <template v-if="previewFileType === 'pdf'">浏览器内嵌 PDF 阅读器</template>
+            <template v-else-if="previewFileType === 'docx' || previewFileType === 'doc'">Word 文档（仅文本预览，原格式会丢失）</template>
+            <template v-else-if="previewFileType === 'pptx'">PPT 演示文稿（仅文本预览）</template>
+            <template v-else>文档预览</template>
+            ：预览效果不好可直接下载原始文件 ↓
+          </span>
+          <div>
+            <el-button @click="previewVisible = false">关闭</el-button>
+            <el-button type="primary" :icon="Download" :disabled="!currentDocId" :loading="downloadingFile" @click="downloadCurrentFile">下载此文件</el-button>
+          </div>
+        </div>
+      </template>
     </el-dialog>
 
     <!-- 编辑弹窗 -->
@@ -171,6 +194,9 @@ const previewTitle = ref('')
 const previewUrl = ref('')
 const previewText = ref('')
 const previewError = ref('')
+const previewFileType = ref('')
+const currentDocId = ref(null)
+const downloadingFile = ref(false)
 let currentObjectUrl = ''
 
 // 编辑
@@ -328,6 +354,8 @@ async function openPreview(row) {
   previewUrl.value = ''
   previewText.value = ''
   previewError.value = ''
+  currentDocId.value = row.id
+  previewFileType.value = row.file_type
   if (currentObjectUrl) {
     URL.revokeObjectURL(currentObjectUrl)
     currentObjectUrl = ''
@@ -386,6 +414,27 @@ async function saveEdit() {
   }
 }
 
+async function downloadCurrentFile() {
+  if (!currentDocId.value) return
+  downloadingFile.value = true
+  try {
+    const blob = await docApi.getFileBlob(currentDocId.value)
+    const safeTitle = (previewTitle.value || 'document').replace(/[\\/:*?"<>|]/g, '_')
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = safeTitle
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000)
+    ElMessage.success('已开始下载')
+  } catch (e) {
+    previewError.value = '下载失败：' + (e.friendlyMsg || e.message || '请稍后重试')
+  } finally {
+    downloadingFile.value = false
+  }
+}
+
 function onScroll() {
   const el = document.documentElement
   if (el.scrollTop + window.innerHeight >= el.scrollHeight - 120 && hasMore.value && !loading.value) {
@@ -432,8 +481,28 @@ onBeforeUnmount(() => {
 }
 .preview-frame {
   width: 100%;
-  height: 65vh;
+  height: 70vh;
   border: none;
+  background: #fff;
+  border-radius: 4px;
+}
+.preview-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.preview-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+.preview-empty {
+  padding: 40px 16px;
+  color: #e6a23c;
+  text-align: center;
+  border: 1px dashed var(--el-color-warning-light-5);
+  border-radius: 6px;
 }
 .preview-text {
   max-height: 65vh;
