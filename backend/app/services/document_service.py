@@ -176,19 +176,67 @@ def _read_legacy_doc(full_path: Path) -> str:
     raise ValueError("暂不支持解析旧版 .doc（Word 97-2003 二进制）文件，请用 Word 另存为 .docx 后重新上传")
 
 
-def _chunk_text(text: str) -> List[str]:
+def _looks_like_markdown(text: str) -> bool:
+    """检测文本是否包含 Markdown 标题结构。"""
+    import re
+    return bool(re.search(r"^#{1,6}\s+\S", text, re.MULTILINE))
+
+
+def _chunk_text(text: str, ext: str = "") -> List[str]:
+    """语义切分：Markdown 按标题层级切，非 Markdown 按段落优先切，超长块再递归细分。"""
     if not text.strip():
         return []
+
     try:
         from langchain_text_splitters import RecursiveCharacterTextSplitter
     except Exception:
         from langchain.text_splitter import RecursiveCharacterTextSplitter  # type: ignore
-    splitter = RecursiveCharacterTextSplitter(
+
+    # 递归切分器（最终兜底，确保每块不超过 chunk_size）
+    recursive = RecursiveCharacterTextSplitter(
         chunk_size=settings.RAG_CHUNK_SIZE,
         chunk_overlap=settings.RAG_CHUNK_OVERLAP,
         separators=["\n\n", "\n", "。", "！", "？", ".", ",", " ", ""],
     )
-    return splitter.split_text(text)
+
+    # --- 策略 1：Markdown 文档，先按标题层级切分，保留章节上下文 ---
+    is_md = ext.lower() in (".md", ".markdown") or _looks_like_markdown(text)
+    if is_md:
+        try:
+            from langchain_text_splitters import MarkdownHeaderTextSplitter
+            md_splitter = MarkdownHeaderTextSplitter(
+                headers_to_split_on=[("#", "h1"), ("##", "h2"), ("###", "h3")],
+            )
+            md_chunks = md_splitter.split_text(text)
+            result: List[str] = []
+            for chunk in md_chunks:
+                # 组合标题作为上下文前缀，帮助向量检索命中
+                parts = [v for v in (chunk.metadata.get("h1"), chunk.metadata.get("h2"), chunk.metadata.get("h3")) if v]
+                header = " > ".join(parts) if parts else ""
+                sub_chunks = recursive.split_text(chunk.page_content)
+                for sc in sub_chunks:
+                    if header and not sc.startswith(header):
+                        sc = f"[{header}] {sc}"
+                    result.append(sc)
+            if result:
+                return result
+        except Exception:
+            pass  # Markdown 切分失败，回退到策略 2
+
+    # --- 策略 2：非 Markdown，先按段落（双换行）分割保留完整性 ---
+    paragraphs = text.split("\n\n")
+    result: List[str] = []
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        if len(para) <= settings.RAG_CHUNK_SIZE:
+            result.append(para)
+        else:
+            # 超长段落用递归切分器细分
+            result.extend(recursive.split_text(para))
+
+    return result if result else recursive.split_text(text)
 
 
 def save_upload(
@@ -231,7 +279,7 @@ def save_upload(
         target.unlink(missing_ok=True)
         raise
 
-    chunks = _chunk_text(text)
+    chunks = _chunk_text(text, ext)
 
     doc = Document(
         owner_id=owner_id,
@@ -274,7 +322,7 @@ def process_document_async(doc_id: int, owner_id: int, file_path: str, ext: str)
         if doc is None:
             return
         text = _read_text(Path(file_path), ext)
-        chunks = _chunk_text(text)
+        chunks = _chunk_text(text, ext)
         doc.chunk_count = len(chunks)
         db.commit()
         if chunks:
