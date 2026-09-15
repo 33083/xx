@@ -5,7 +5,7 @@ import re
 import urllib.parse
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -60,86 +60,19 @@ def _rfc5987_cd(filename: str, *, inline: bool = True) -> str:
 
 
 @router.post("/upload", response_model=ApiResponse[DocumentUploaded])
-async def upload_document(
+def upload_document(
     file: UploadFile = File(..., description="PDF/TXT/MD/DOCX/PPTX..."),
     category: str | None = Form(None, description="material/resume/interview，留空按文件名猜"),
     description: str | None = Form(None, description="备注"),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """上传文档：同步保存文件 + 建库记录，异步做文本提取/切块/向量化。
-
-    通过 BackgroundTasks 调用 document_service.process_document_async，
-    避免大文件解析阻塞上传响应。chunk_count 在异步处理完成后更新。
-    """
-    import shutil
-    import uuid
-    from datetime import datetime
-
-    from sqlalchemy import select
-
-    from app.core.vectorstore import user_collection_name
-    from app.models.document import Document
-
+    """上传文档：保存文件 → 文本提取 → 切块 → 向量化入库（同步）。"""
     try:
-        raw = file.filename or "unnamed"
-        ext = os.path.splitext(raw)[1].lower()
-        if ext not in document_service._ALLOWED_EXT:
-            raise ValueError(f"不支持的文件类型：{ext or '无'}，支持 {sorted(document_service._ALLOWED_EXT)}")
-
-        # 1. 保存文件
-        storage = document_service._ensure_dirs()
-        safe_name = f"{datetime.now():%Y%m%d}_{uuid.uuid4().hex[:8]}_{os.path.basename(raw)}"
-        target = storage / f"u{current.id}" / safe_name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("wb") as fout:
-            shutil.copyfileobj(file.file, fout)
-        file_size = target.stat().st_size
-        max_bytes = settings.DOC_MAX_MB * 1024 * 1024
-        if file_size > max_bytes:
-            target.unlink(missing_ok=True)
-            raise ValueError(f"文件过大：{file_size // 1024 // 1024}MB，上限 {settings.DOC_MAX_MB}MB")
-
-        # 2. 计算 MD5 去重
-        digest = document_service._md5_of(target)
-        existing = db.scalar(
-            select(Document).where(Document.owner_id == current.id, Document.md5 == digest)
+        result = document_service.save_upload(
+            current.id, file, db, category=category, description=description,
         )
-        if existing is not None:
-            target.unlink(missing_ok=True)
-            raise ValueError(f"相同内容的文件已存在：{existing.title}")
-
-        # 3. 创建 Document 记录（chunk_count 先设为 0，异步处理完成后更新）
-        doc = Document(
-            owner_id=current.id,
-            title=raw,
-            file_type=document_service._file_type(ext),
-            file_path=str(target),
-            file_size=file_size,
-            md5=digest,
-            category=document_service._category_of(raw, category),
-            chroma_collection=user_collection_name(current.id),
-            chunk_count=0,
-            description=description,
-        )
-        db.add(doc)
-        db.flush()
-
-        # 4. 提交到数据库
-        db.commit()
-        db.refresh(doc)
-
-        # 5. 用 BackgroundTasks 添加 process_document_async 任务
-        background_tasks.add_task(
-            document_service.process_document_async,
-            doc.id, current.id, str(target), ext,
-        )
-
-        # 6. 立即返回
-        return ApiResponse(data=DocumentUploaded(
-            id=doc.id, title=doc.title, chunk_count=doc.chunk_count, category=doc.category,
-        ))
+        return ApiResponse(data=result)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except RuntimeError as e:
