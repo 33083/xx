@@ -880,62 +880,106 @@ async def chat_stream(user: User, req: ChatRequest, db: Session) -> AsyncIterato
                 sys_msgs[0].content += "\n\n**用户明确要求联网搜索**：本次对话必须使用 bocha_search 工具进行联网搜索，直接返回搜索结果，不要解释。"
     full_parts: list[str] = []
     tool_trace_stream: list[dict] = []
-    try:
-        if use_vision:
-            # 视觉模型：直接 invoke 拿完整答案，再切片伪流式
-            import asyncio as _asyncio
-            try:
-                ai_msg = llm.invoke(messages)
-                full_answer = (
-                    ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
-                )
-                full_answer = str(full_answer)
-            except Exception as e:
-                full_answer = f"[视觉模型调用失败：{e}]"
-            step = 4
-            for i in range(0, len(full_answer), step):
-                await _asyncio.sleep(0.02)
-                piece = full_answer[i : i + step]
-                full_parts.append(piece)
-                yield _sse("delta", json.dumps({"content": piece}, ensure_ascii=False))
-        elif tools:
-            # 工具调用：真实流式 + Function Calling。
-            # 文本随 LLM 生成即吐（真流式）；工具开始/结束发独立 tool 事件，前端实时展示。
-            async for ev in _stream_with_tools(llm, messages, tools, tool_trace_stream):
-                if ev["type"] == "text":
-                    piece = ev["content"]
-                    if piece:
-                        full_parts.append(piece)
-                        yield _sse("delta", json.dumps({"content": piece}, ensure_ascii=False))
-                elif ev["type"] == "tool":
-                    yield _sse("tool", json.dumps({"tool": ev["tool"]}, ensure_ascii=False))
-        else:
-            # 无工具：走真实 astream
-            async for chunk in llm.astream(messages):
-                # 优先：AIMessageChunk.content (str | list[block])
-                if hasattr(chunk, "content"):
-                    content = chunk.content
-                    if isinstance(content, str):
-                        txt = content
-                    elif isinstance(content, list):
-                        parts_i: list[str] = []
-                        for b in content:
-                            if isinstance(b, str):
-                                parts_i.append(b)
-                            elif isinstance(b, dict) and isinstance(b.get("text"), str):
-                                parts_i.append(b["text"])
-                        txt = "".join(parts_i)
+    # SSE 心跳保活：在第一个 token 到达前，每隔 15 秒发送一个 SSE 注释心跳
+    # （": heartbeat\n\n"），防止代理/浏览器因长时间无数据而断开连接。
+    # 首个真实数据到达后停止心跳。实现方式：把流式生成放进一个生产者任务，
+    # 主生成器在首 token 前用 asyncio.wait_for(15s) 取数据，超时则吐心跳。
+    import asyncio as _asyncio
+    _hb_queue: _asyncio.Queue = _asyncio.Queue()
+    _hb_sentinel = object()
+    _hb_error_prefix = "__hb_error__"
+
+    async def _hb_producer() -> None:
+        """生产者任务：执行流式生成，把 SSE 帧推入队列。"""
+        try:
+            if use_vision:
+                # 视觉模型：直接 invoke 拿完整答案，再切片伪流式
+                # 用 to_thread 把阻塞的 invoke 放到线程，避免阻塞事件循环，
+                # 从而让心跳超时机制在等待期间仍然能触发。
+                try:
+                    ai_msg = await _asyncio.to_thread(llm.invoke, messages)
+                    full_answer = (
+                        ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
+                    )
+                    full_answer = str(full_answer)
+                except Exception as e:
+                    full_answer = f"[视觉模型调用失败：{e}]"
+                step = 4
+                for i in range(0, len(full_answer), step):
+                    await _asyncio.sleep(0.02)
+                    piece = full_answer[i : i + step]
+                    full_parts.append(piece)
+                    await _hb_queue.put(_sse("delta", json.dumps({"content": piece}, ensure_ascii=False)))
+            elif tools:
+                # 工具调用：真实流式 + Function Calling。
+                async for ev in _stream_with_tools(llm, messages, tools, tool_trace_stream):
+                    if ev["type"] == "text":
+                        piece = ev["content"]
+                        if piece:
+                            full_parts.append(piece)
+                            await _hb_queue.put(_sse("delta", json.dumps({"content": piece}, ensure_ascii=False)))
+                    elif ev["type"] == "tool":
+                        await _hb_queue.put(_sse("tool", json.dumps({"tool": ev["tool"]}, ensure_ascii=False)))
+            else:
+                # 无工具：走真实 astream
+                async for chunk in llm.astream(messages):
+                    if hasattr(chunk, "content"):
+                        content = chunk.content
+                        if isinstance(content, str):
+                            txt = content
+                        elif isinstance(content, list):
+                            parts_i: list[str] = []
+                            for b in content:
+                                if isinstance(b, str):
+                                    parts_i.append(b)
+                                elif isinstance(b, dict) and isinstance(b.get("text"), str):
+                                    parts_i.append(b["text"])
+                            txt = "".join(parts_i)
+                        else:
+                            txt = str(content)
+                    elif hasattr(chunk, "text") and isinstance(chunk.text, str):
+                        txt = chunk.text
                     else:
-                        txt = str(content)
-                elif hasattr(chunk, "text") and isinstance(chunk.text, str):
-                    txt = chunk.text
-                else:
-                    txt = str(chunk)
-                if txt:
-                    full_parts.append(str(txt))
-                    yield _sse("delta", json.dumps({"content": str(txt)}, ensure_ascii=False))
-    except Exception as e:
-        yield _sse("error", json.dumps({"detail": f"LLM 错误：{e}"}, ensure_ascii=False))
+                        txt = str(chunk)
+                    if txt:
+                        full_parts.append(str(txt))
+                        await _hb_queue.put(_sse("delta", json.dumps({"content": str(txt)}, ensure_ascii=False)))
+        except Exception as e:
+            await _hb_queue.put(_hb_error_prefix + _sse("error", json.dumps({"detail": f"LLM 错误：{e}"}, ensure_ascii=False)))
+        finally:
+            await _hb_queue.put(_hb_sentinel)
+
+    _hb_task = _asyncio.create_task(_hb_producer())
+    _hb_first_token = True
+    _hb_had_error = False
+    try:
+        while True:
+            if _hb_first_token:
+                try:
+                    _hb_item = await _asyncio.wait_for(_hb_queue.get(), timeout=15.0)
+                except _asyncio.TimeoutError:
+                    # 首 token 到达前，每 15 秒发送 SSE 注释行心跳
+                    yield ": heartbeat\n\n"
+                    continue
+            else:
+                _hb_item = await _hb_queue.get()
+            if _hb_item is _hb_sentinel:
+                break
+            if isinstance(_hb_item, str) and _hb_item.startswith(_hb_error_prefix):
+                yield _hb_item[len(_hb_error_prefix):]
+                _hb_had_error = True
+                break
+            _hb_first_token = False
+            yield _hb_item
+    finally:
+        if not _hb_task.done():
+            _hb_task.cancel()
+            try:
+                await _hb_task
+            except (_asyncio.CancelledError, Exception):
+                pass
+
+    if _hb_had_error:
         return
 
     answer = "".join(full_parts)

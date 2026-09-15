@@ -29,6 +29,13 @@ def register_user(db: Session, payload: RegisterRequest) -> User:
     )
     if existing:
         raise ValueError("用户名或邮箱已被注册")
+    # 密码强度校验：至少 8 位，包含字母和数字
+    if len(payload.password) < 8:
+        raise ValueError("密码长度至少 8 位")
+    if not any(c.isalpha() for c in payload.password):
+        raise ValueError("密码必须包含字母")
+    if not any(c.isdigit() for c in payload.password):
+        raise ValueError("密码必须包含数字")
     user = User(
         username=payload.username,
         email=payload.email,
