@@ -4,7 +4,9 @@
 
     uvicorn app.main:app --reload --port 8000
 """
+import logging
 import os
+import time as _time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -15,6 +17,13 @@ from fastapi.staticfiles import StaticFiles
 from app.api.v1 import api_router
 from app.config import settings
 from app.database import init_db
+
+# 结构化日志
+logger = logging.getLogger("app")
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL, logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 
 @asynccontextmanager
@@ -52,6 +61,28 @@ async def global_rate_limit(request: Request, call_next):
             headers={"Retry-After": "60"},
         )
     return await call_next(request)
+
+
+# 请求日志中间件：记录每个请求的方法、路径、状态码与耗时
+@app.middleware("http")
+async def request_log(request: Request, call_next):
+    start = _time.time()
+    response = await call_next(request)
+    duration_ms = int((_time.time() - start) * 1000)
+    logger.info(
+        f"{request.method} {request.url.path} -> {response.status_code} ({duration_ms}ms)"
+    )
+    return response
+
+
+# 全局异常处理：捕获未处理异常，返回统一 500 响应并记录日志
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"未捕获异常: {request.method} {request.url.path} - {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "服务器内部错误，请稍后重试"},
+    )
 
 
 # 路由

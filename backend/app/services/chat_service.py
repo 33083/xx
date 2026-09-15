@@ -662,6 +662,27 @@ def chat_sync(user: User, req: ChatRequest, db: Session) -> ChatResponse:
     if bad:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=f"内容包含敏感词：{bad}，请调整后重试")
+    # 热门问答缓存（非 grill 模式、无图片时启用）
+    cache_key = ""
+    if settings.RAG_CACHE_ENABLED and not req.image_url and getattr(req, "agent_type", None) != "grill" and (req.agent_type and req.agent_type.value != "grill"):
+        import hashlib
+        cache_key = f"qa_cache:{hashlib.md5(req.message.encode()).hexdigest()}"
+        try:
+            from app.core.ratelimit import _get_redis_client
+            rdb = _get_redis_client()
+            cached = rdb.get(cache_key)
+            if cached:
+                import json
+                data = json.loads(cached)
+                return ChatResponse(
+                    conversation_id=data["conversation_id"],
+                    message_id=data["message_id"],
+                    answer=data["answer"],
+                    refs=data.get("refs", []),
+                    rag_ok=data.get("rag_ok", True),
+                )
+        except Exception:
+            pass
     # 1. 建/取会话
     if req.conversation_id:
         c = get_conversation(user, req.conversation_id, db)
@@ -751,6 +772,22 @@ def chat_sync(user: User, req: ChatRequest, db: Session) -> ChatResponse:
         )
     except Exception:
         pass
+
+    # 写入缓存
+    if cache_key:
+        try:
+            from app.core.ratelimit import _get_redis_client
+            rdb = _get_redis_client()
+            import json
+            rdb.setex(cache_key, settings.RAG_CACHE_TTL, json.dumps({
+                "conversation_id": c.id,
+                "message_id": assistant_msg.id,
+                "answer": answer,
+                "refs": [r.model_dump() for r in refs] if refs else [],
+                "rag_ok": rag_ok,
+            }, ensure_ascii=False))
+        except Exception:
+            pass
 
     return ChatResponse(
         conversation_id=c.id,

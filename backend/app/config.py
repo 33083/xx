@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "change-me-in-production-please"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 天
+    # JWT 黑名单：退出登录后令牌立即失效（依赖 Redis）
+    JWT_BLACKLIST_ENABLED: bool = True
 
     @model_validator(mode="after")
     def _validate_jwt_secret(self) -> "Settings":
@@ -52,8 +54,11 @@ class Settings(BaseSettings):
             )
         return self
 
-    # 跨域：前端开发地址
+    # 跨域：前端开发地址（生产环境通过 .env 覆盖）
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    # 日志级别：DEBUG / INFO / WARNING / ERROR
+    LOG_LEVEL: str = "INFO"
 
     # Chroma：优先 HTTP 服务（Docker compose 默认 http://127.0.0.1:8001）；留空则嵌入式目录
     CHROMA_SERVER_URL: str = "http://127.0.0.1:8001"
@@ -88,6 +93,15 @@ class Settings(BaseSettings):
     RAG_TOP_K: int = 4
     # 相关度阈值：Chroma 距离（越小越相关），超过该值视为不相关并丢弃
     RAG_MIN_SCORE: float = 1.5
+
+    # RAG rerank 重排序（提升检索精度）
+    RERANK_ENABLED: bool = False
+    RERANK_MODEL: str = "BAAI/bge-reranker-base"
+    RERANK_TOP_K: int = 4  # rerank 后保留的最终数量
+
+    # 热门问答缓存（Redis）
+    RAG_CACHE_ENABLED: bool = True
+    RAG_CACHE_TTL: int = 3600  # 缓存有效期（秒）
 
     # 大模型 API（后续模块填充）
     DEEPSEEK_API_KEY: str = ""

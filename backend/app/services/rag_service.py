@@ -29,6 +29,25 @@ def _is_collection_missing(exc: Exception) -> bool:
     return "not found" in msg or "does not exist" in msg or "no collection" in msg
 
 
+def _rerank(query: str, hits: List[ChunkRef]) -> List[ChunkRef]:
+    """用 reranker 模型对检索结果重排序。
+
+    如果 rerank 模型加载失败或出错，返回原始排序（降级）。
+    """
+    try:
+        from sentence_transformers import CrossEncoder
+        model = CrossEncoder(settings.RERANK_MODEL)
+        pairs = [[query, h.content] for h in hits]
+        scores = model.predict(pairs)
+        # 按 rerank 分数降序排列
+        ranked = sorted(zip(hits, scores), key=lambda x: x[1], reverse=True)
+        result = [h for h, _ in ranked[:settings.RERANK_TOP_K]]
+        return result
+    except Exception:
+        # 降级：返回原始排序
+        return hits
+
+
 def rag_search(
     user_id: int, query: str, *, category: str = "all", top_k: int | None = None
 ) -> RagSearchOut:
@@ -68,6 +87,9 @@ def rag_search(
         combined = [r for r in combined if r.score <= min_score]
     combined.sort(key=lambda x: x.score)
     combined = combined[:k]
+    # rerank 重排序（可选，提升检索精度）
+    if settings.RERANK_ENABLED and combined:
+        combined = _rerank(query, combined)
     return RagSearchOut(query=query, hits=combined, rag_ok=rag_ok)
 
 

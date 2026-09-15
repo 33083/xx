@@ -28,6 +28,10 @@ def get_current_user(
     token_data = decode_access_token(token)
     if token_data is None or token_data.user_id is None:
         raise creds_exc
+    # 检查 JWT 黑名单（退出登录后令牌立即失效）
+    from app.core.security import is_token_blacklisted
+    if is_token_blacklisted(token):
+        raise creds_exc
     user = db.get(User, token_data.user_id)
     if user is None or not user.is_active:
         raise creds_exc

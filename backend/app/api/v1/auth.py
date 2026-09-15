@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, oauth2_scheme
 from app.core.ratelimit import LIMITER, client_ip, rate_limit_ip
 from app.core.security import create_access_token
 from app.database import get_db
@@ -82,3 +82,11 @@ def login_form(
 @router.get("/me", response_model=UserOut)
 def me(current: User = Depends(get_current_user)):
     return current
+
+
+@router.post("/logout", response_model=dict)
+def logout(current: User = Depends(get_current_user), token: str = Depends(oauth2_scheme)):
+    """退出登录：将当前 token 加入黑名单。"""
+    from app.core.security import blacklist_token
+    blacklist_token(token)
+    return {"detail": "已退出登录"}

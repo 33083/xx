@@ -64,3 +64,55 @@ def decode_access_token(token: str) -> TokenData | None:
         return TokenData(sub=sub, user_id=user_id, role=role)
     except PyJWTError:
         return None
+
+
+# ---------------- JWT 黑名单 ----------------
+
+def _get_blacklist_redis():
+    """获取 Redis 客户端用于黑名单（连接失败返回 None）。"""
+    try:
+        import redis as redis_lib
+        rdb = redis_lib.Redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=1.5,
+            socket_timeout=2.0,
+            decode_responses=True,
+        )
+        rdb.ping()
+        return rdb
+    except Exception:
+        return None
+
+
+def blacklist_token(token: str) -> None:
+    """将 token 加入黑名单（退出登录时调用）。"""
+    if not settings.JWT_BLACKLIST_ENABLED:
+        return
+    rdb = _get_blacklist_redis()
+    if rdb is None:
+        return
+    try:
+        # 解析 token 的过期时间，设置相同的 TTL
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        exp = payload.get("exp")
+        if exp:
+            import time
+            ttl = max(1, int(exp) - int(time.time()))
+        else:
+            ttl = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        rdb.setex(f"jwt_blacklist:{token}", ttl, "1")
+    except Exception:
+        pass
+
+
+def is_token_blacklisted(token: str) -> bool:
+    """检查 token 是否在黑名单中。"""
+    if not settings.JWT_BLACKLIST_ENABLED:
+        return False
+    rdb = _get_blacklist_redis()
+    if rdb is None:
+        return False  # Redis 不可用时放行，避免锁死用户
+    try:
+        return rdb.exists(f"jwt_blacklist:{token}") > 0
+    except Exception:
+        return False

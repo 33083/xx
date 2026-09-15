@@ -62,6 +62,36 @@ services:
     volumes:
       - chroma_data:/chroma/chroma
 
+  backend:
+    build: ./backend
+    container_name: campus-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      CHROMA_SERVER_URL: http://chroma:8000
+      DEBUG: "false"
+    env_file: ./backend/.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/data:/app/data
+      - ./backend/uploads:/app/uploads
+
+  frontend:
+    build: ./frontend
+    container_name: campus-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
 volumes:
   mysql_data:
   redis_data:

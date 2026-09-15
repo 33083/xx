@@ -262,6 +262,39 @@ def save_upload(
     return DocumentUploaded(id=doc.id, title=doc.title, chunk_count=doc.chunk_count, category=doc.category)
 
 
+def process_document_async(doc_id: int, owner_id: int, file_path: str, ext: str):
+    """异步处理文档：文本提取 → 切块 → 向量化入库。
+
+    供 BackgroundTasks 调用，不阻塞上传响应。
+    """
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        doc = db.get(Document, doc_id)
+        if doc is None:
+            return
+        text = _read_text(Path(file_path), ext)
+        chunks = _chunk_text(text)
+        doc.chunk_count = len(chunks)
+        db.commit()
+        if chunks:
+            ids = [f"d{doc.id}_c{i}" for i in range(len(chunks))]
+            metas = [
+                {"doc_id": doc.id, "doc_title": doc.title, "category": doc.category, "chunk_index": i}
+                for i in range(len(chunks))
+            ]
+            vs = get_user_vectorstore(owner_id)
+            vs.add_texts(texts=chunks, metadatas=metas, ids=ids)
+    except Exception as e:
+        # 异步处理失败：标记文档为处理失败（但不删除文件）
+        doc = db.get(Document, doc_id)
+        if doc:
+            doc.description = f"[处理失败] {e}"
+            db.commit()
+    finally:
+        db.close()
+
+
 def list_my_documents(
     owner_id: int,
     db: Session,

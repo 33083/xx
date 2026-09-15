@@ -43,3 +43,9 @@ tiktoken==0.8.0
 
 # 开发工具
 ruff==0.8.4
+
+# 数据库迁移
+alembic>=1.14.0
+
+# RAG rerank（可选，RERANK_ENABLED=true 时需要）
+sentence-transformers>=2.7.0
