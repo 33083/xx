@@ -38,6 +38,10 @@ app = FastAPI(
     version=settings.APP_VERSION,
     description="基于大模型的大学生学习与求职智能助手系统",
     lifespan=lifespan,
+    # 生产环境（DEBUG=False）关闭 Swagger UI，避免暴露接口结构
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
 )
 
 # 跨域：允许前端开发地址访问
